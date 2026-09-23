@@ -1,0 +1,92 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ikonex_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-ikonex_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ikonex_secure_pass}
+      POSTGRES_DB: ${DB_NAME:-ikonex_academy}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-ikonex_admin} -d ${DB_NAME:-ikonex_academy}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ikonex_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ikonex_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - ENVIRONMENT=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:-ikonex_admin}
+      - DB_PASSWORD=${DB_PASSWORD:-ikonex_secure_pass}
+      - DB_NAME=${DB_NAME:-ikonex_academy}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=${JWT_SECRET:-dev_secret_key_needs_replacement_32_chars_min}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev_internal_secret_token}
+      - BACKEND_PORT=8080
+    ports:
+      - "8080:8080"
+
+  ai_service:
+    build:
+      context: ./ai_service
+      dockerfile: Dockerfile
+    container_name: ikonex_ai_service
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      - AI_SERVICE_PORT=8000
+      - GO_BACKEND_INTERNAL_URL=http://backend:8080/api/v1/internal
+      - AI_SERVICE_SECRET_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev_internal_secret_token}
+      - MISTRAL_API_URL=${MISTRAL_API_URL:-http://host.docker.internal:11434/v1}
+      - MISTRAL_MODEL_NAME=${MISTRAL_MODEL_NAME:-mistral-7b-instruct}
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ikonex_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
+  redis_data:
